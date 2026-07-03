@@ -1,6 +1,6 @@
 # 内存条套利监控日常操作手册
 
-本文档说明每天如何使用 `memory-arbitrage` 做内存条套利监控。当前工具只用于本地记录、分析和辅助决策，不自动抓取真实平台、不绕过登录或验证码、不自动下单。
+本文档说明每天如何使用 `memory-arbitrage` 做内存条套利监控。当前工具只用于本地记录、分析、有限自动采集和辅助决策，不绕过登录或验证码、不自动下单。
 
 ## 1. 每日采集流程
 
@@ -47,6 +47,12 @@ python src/main.py fetch-prices --product-id kingbank-ddr4-3200-16g-001 --source
 
 ```bash
 python src/main.py analyze
+```
+
+`fetch-prices` 会在结束后自动检查新增降价提醒。需要单独复查时也可以运行：
+
+```bash
+python src/main.py check-alerts
 ```
 
 4. 如果自动采集失败，再输出买入平台链接清单。
@@ -199,6 +205,7 @@ python -m playwright install chromium
 - 不并发采集
 - 默认每个页面间隔 `5` 秒
 - 默认每次最多采集 `10` 个商品
+- 闲鱼侧只监听搜索页自然返回的搜索结果响应，监听不到时回退到 HTML/DOM 解析
 
 遇到以下情况，工具会停止或给出失败原因：
 
@@ -215,6 +222,40 @@ python -m playwright install chromium
 - 如果是登录或验证码，不要反复运行。
 - 回退到手动 `prices.csv`。
 - 闲鱼可回退到保存 HTML 后使用 `import-xianyu-html`。
+
+## 2.2 降价提醒如何看
+
+降价提醒是本地事件，不会发邮件或推送。事件写入 SQLite 的 `alert_events` 表，并在命令行输出。
+
+手动检查：
+
+```bash
+python src/main.py check-alerts
+```
+
+只检查单个商品：
+
+```bash
+python src/main.py check-alerts --product-id kingbank-ddr4-3200-16g-001
+```
+
+提醒类型：
+
+- `达到目标买入价`：当前买入价不高于商品池里的 `target_buy_price`。
+- `历史新低`：当前买入价低于该商品历史所有买入价。
+- `较上次下降`：当前买入价低于上一次买入价，并达到阈值。
+
+默认阈值：
+
+```bash
+python src/main.py check-alerts --min-drop-abs 10 --min-drop-pct 5 --cooldown-hours 24
+```
+
+含义：
+
+- 较上次下降至少 `10` 元，或下降比例至少 `5%`，才触发“较上次下降”。
+- 同一商品同一提醒类型默认 `24` 小时内只新增一次，避免重复提醒。
+- 目标价和历史新低不受 `min-drop-abs` 限制，只受冷却时间限制。
 
 ## 3. 闲鱼参考价如何取值
 
@@ -234,6 +275,17 @@ python -m playwright install chromium
 如果同款正常在售价大多集中在 `200-220`，有一个 `160` 的异常低价和几个 `260+` 的高挂价，那么参考价可以取 `205` 或 `210`，不取 `160`，也不取 `260`。
 
 使用 `suggest-prices` 时，工具会自动执行类似逻辑：先剔除异常低价和明显高挂价，再优先参考标题匹配同款、成色更接近全新/未拆封的低价区间样本。
+
+自动闲鱼采集和 HTML 导入会尽量解析这些字段：
+
+- 标题
+- 价格
+- 地区
+- 发布时间/更新时间
+- 想要人数/浏览信息
+- 商品链接
+- 成色，例如 `全新`、`准新`、`9成新`
+- 是否包邮，如果页面数据可见
 
 建议结果可信度判断：
 
@@ -357,3 +409,12 @@ python src/main.py import-products --file config/products.yaml
 ```
 
 试运营阶段建议每 7 天复盘一次，不要每天频繁改参数，否则很难判断策略是否有效。
+
+## 6. 本次参考项目带来的使用变化
+
+这次只吸收适合本地轻量版的做法：
+
+- 闲鱼采集优先从 Playwright 打开的搜索页里监听搜索结果响应，减少保存 HTML 的次数。
+- 仍然保留 HTML/DOM 解析作为失败回退，不要求登录态，也不处理验证码。
+- 价格历史继续存在 `price_observations`，不单独引入复杂时间序列库。
+- 降价提醒从历史价格派生，先做命令行和 SQLite 本地事件，不做邮件、浏览器推送或后台调度。

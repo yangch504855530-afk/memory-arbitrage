@@ -69,12 +69,16 @@ def init_db(db_path: str | Path = DEFAULT_DB_PATH) -> None:
             CREATE TABLE IF NOT EXISTS xianyu_results (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 product_id TEXT NOT NULL,
+                item_id TEXT NOT NULL DEFAULT '',
                 title TEXT NOT NULL DEFAULT '',
                 price REAL,
                 location TEXT NOT NULL DEFAULT '',
                 item_updated_at TEXT NOT NULL DEFAULT '',
+                publish_time TEXT NOT NULL DEFAULT '',
                 want_info TEXT NOT NULL DEFAULT '',
                 item_url TEXT NOT NULL DEFAULT '',
+                condition TEXT NOT NULL DEFAULT '',
+                free_shipping INTEGER,
                 source_file TEXT NOT NULL DEFAULT '',
                 observed_at TEXT NOT NULL,
                 raw_text TEXT NOT NULL DEFAULT '',
@@ -86,8 +90,44 @@ def init_db(db_path: str | Path = DEFAULT_DB_PATH) -> None:
 
             CREATE INDEX IF NOT EXISTS idx_xianyu_results_product_time
             ON xianyu_results(product_id, observed_at DESC, id DESC);
+
+            CREATE TABLE IF NOT EXISTS alert_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                product_id TEXT NOT NULL,
+                alert_type TEXT NOT NULL,
+                source TEXT NOT NULL DEFAULT '',
+                current_price REAL,
+                previous_price REAL,
+                threshold_price REAL,
+                drop_abs REAL,
+                drop_pct REAL,
+                message TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL,
+                notified INTEGER NOT NULL DEFAULT 0,
+                FOREIGN KEY(product_id) REFERENCES products(product_id)
+                    ON UPDATE CASCADE
+                    ON DELETE CASCADE
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_alert_events_product_time
+            ON alert_events(product_id, created_at DESC, id DESC);
             """
         )
+        _ensure_column(conn, "xianyu_results", "item_id", "item_id TEXT NOT NULL DEFAULT ''")
+        _ensure_column(conn, "xianyu_results", "publish_time", "publish_time TEXT NOT NULL DEFAULT ''")
+        _ensure_column(conn, "xianyu_results", "condition", "condition TEXT NOT NULL DEFAULT ''")
+        _ensure_column(conn, "xianyu_results", "free_shipping", "free_shipping INTEGER")
+
+
+def _ensure_column(
+    conn: sqlite3.Connection,
+    table: str,
+    column: str,
+    definition: str,
+) -> None:
+    existing = {str(row["name"]) for row in conn.execute(f"PRAGMA table_info({table})")}
+    if column not in existing:
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {definition}")
 
 
 def upsert_products(
@@ -248,12 +288,16 @@ def replace_xianyu_results(
     rows = [
         (
             product_id,
+            str(result.get("item_id") or ""),
             str(result.get("title") or ""),
             result.get("price"),
             str(result.get("location") or ""),
             str(result.get("item_updated_at") or ""),
+            str(result.get("publish_time") or ""),
             str(result.get("want_info") or ""),
             str(result.get("item_url") or ""),
+            str(result.get("condition") or ""),
+            _bool_to_int(result.get("free_shipping")),
             source_file,
             observed_at,
             str(result.get("raw_text") or ""),
@@ -279,22 +323,41 @@ def replace_xianyu_results(
                 """
                 INSERT INTO xianyu_results (
                     product_id,
+                    item_id,
                     title,
                     price,
                     location,
                     item_updated_at,
+                    publish_time,
                     want_info,
                     item_url,
+                    condition,
+                    free_shipping,
                     source_file,
                     observed_at,
                     raw_text,
                     created_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 rows,
             )
     return len(rows)
+
+
+def _bool_to_int(value: object) -> int | None:
+    if value is None or value == "":
+        return None
+    if isinstance(value, bool):
+        return 1 if value else 0
+    if isinstance(value, (int, float)):
+        return 1 if value else 0
+    text = str(value).strip().lower()
+    if text in {"true", "yes", "1", "是", "包邮"}:
+        return 1
+    if text in {"false", "no", "0", "否", "不包邮"}:
+        return 0
+    return None
 
 
 def fetch_latest_xianyu_results(

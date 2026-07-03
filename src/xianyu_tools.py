@@ -50,10 +50,14 @@ GENERATED_PRICE_HEADERS = [
 class XianyuParsedItem:
     title: str
     price: float | None
+    item_id: str = ""
     location: str = ""
     item_updated_at: str = ""
+    publish_time: str = ""
     want_info: str = ""
     item_url: str = ""
+    condition: str = ""
+    free_shipping: bool | None = None
     raw_text: str = ""
 
 
@@ -134,7 +138,7 @@ def import_xianyu_html(
 
 
 def parse_xianyu_html(html: str, product: Product) -> list[XianyuParsedItem]:
-    items = _parse_json_items(html) + _parse_dom_items(html)
+    items = _parse_json_items(html, product) + _parse_dom_items(html)
     cleaned = _dedupe_items(items)
     scored = sorted(
         cleaned,
@@ -145,6 +149,23 @@ def parse_xianyu_html(html: str, product: Product) -> list[XianyuParsedItem]:
         ),
     )
     return scored
+
+
+def parse_xianyu_search_json(raw: Any, product: Product | None = None) -> list[XianyuParsedItem]:
+    items = _items_from_goofish_search_json(raw)
+    if not items:
+        items = _items_from_json(raw)
+    cleaned = _dedupe_items(items)
+    if product is None:
+        return cleaned
+    return sorted(
+        cleaned,
+        key=lambda item: (
+            -_title_score(product, item.title),
+            item.price if item.price is not None else math.inf,
+            item.title,
+        ),
+    )
 
 
 def suggest_prices(
@@ -214,12 +235,16 @@ def _suggest_price(
     observed_at = str(rows[0]["observed_at"]) if rows else ""
     items = [
         XianyuParsedItem(
+            item_id=str(row["item_id"]) if "item_id" in row.keys() else "",
             title=str(row["title"]),
             price=row["price"],
             location=str(row["location"]),
             item_updated_at=str(row["item_updated_at"]),
+            publish_time=str(row["publish_time"]) if "publish_time" in row.keys() else "",
             want_info=str(row["want_info"]),
             item_url=str(row["item_url"]),
+            condition=str(row["condition"]) if "condition" in row.keys() else "",
+            free_shipping=bool(row["free_shipping"]) if "free_shipping" in row.keys() and row["free_shipping"] is not None else None,
             raw_text=str(row["raw_text"]),
         )
         for row in rows
@@ -282,7 +307,7 @@ def _suggest_price(
     )
 
 
-def _parse_json_items(html: str) -> list[XianyuParsedItem]:
+def _parse_json_items(html: str, product: Product) -> list[XianyuParsedItem]:
     items: list[XianyuParsedItem] = []
     try:
         from bs4 import BeautifulSoup
@@ -297,7 +322,7 @@ def _parse_json_items(html: str) -> list[XianyuParsedItem]:
             continue
         payloads = _json_payloads(text)
         for payload in payloads:
-            items.extend(_items_from_json(payload))
+            items.extend(parse_xianyu_search_json(payload, product))
     return items
 
 
@@ -335,7 +360,83 @@ def _items_from_json(payload: Any) -> list[XianyuParsedItem]:
     return items
 
 
+def _items_from_goofish_search_json(payload: Any) -> list[XianyuParsedItem]:
+    if not isinstance(payload, dict):
+        return []
+    result_list = (((payload or {}).get("data") or {}).get("resultList")) or []
+    if not isinstance(result_list, list):
+        return []
+
+    items: list[XianyuParsedItem] = []
+    for node in result_list:
+        if not isinstance(node, dict):
+            continue
+        main = ((((node.get("data") or {}).get("item") or {}).get("main")) or {})
+        if not isinstance(main, dict):
+            continue
+        ex_content = main.get("exContent") or {}
+        detail_params = ex_content.get("detailParams") if isinstance(ex_content, dict) else {}
+        click_args = (main.get("clickParam") or {}).get("args") if isinstance(main.get("clickParam"), dict) else {}
+        if not isinstance(ex_content, dict):
+            ex_content = {}
+        if not isinstance(detail_params, dict):
+            detail_params = {}
+        if not isinstance(click_args, dict):
+            click_args = {}
+
+        item_id = (
+            _first_text(ex_content, ["itemId", "item_id", "id"])
+            or _first_text(detail_params, ["itemId", "item_id", "id"])
+            or _first_text(click_args, ["item_id", "itemId", "id"])
+        )
+        title = (
+            _first_text(ex_content, ["title", "name", "mainTitle"])
+            or _first_text(detail_params, ["title", "name", "mainTitle"])
+        )
+        price = _price_from_any(
+            _first_value(detail_params, ["soldPrice", "price", "displayPrice"])
+            or _first_value(click_args, ["price", "soldPrice", "displayPrice"])
+            or _first_value(ex_content, ["soldPrice", "currentPrice", "priceText"])
+        )
+        if not title or price is None:
+            continue
+
+        item_url = (
+            _normalize_url(_first_text(ex_content, ["itemUrl", "url", "targetUrl", "detailUrl"]))
+            or _normalize_url(_first_text(detail_params, ["itemUrl", "url", "targetUrl", "detailUrl"]))
+            or (f"https://www.goofish.com/item?id={item_id}" if item_id else "")
+        )
+        tag = _first_text(click_args, ["tag", "tags"])
+        tagname = _first_text(click_args, ["tagname", "tagName"])
+        publish_time = (
+            _timestamp_to_iso(_first_value(click_args, ["publishTime", "publish_time"]))
+            or _first_text(ex_content, ["publishTime", "publish_time"])
+            or _first_text(detail_params, ["publishTime", "publish_time"])
+        )
+        raw_source = main if main else node
+        items.append(
+            XianyuParsedItem(
+                item_id=item_id,
+                title=title,
+                price=price,
+                location=_first_text(ex_content, ["area", "location", "city", "sellerLocation"]),
+                item_updated_at=_first_text(ex_content, ["updateTime", "itemUpdatedAt", "createdAt"]),
+                publish_time=publish_time,
+                want_info=(
+                    _first_text(ex_content, ["wantCount", "wantNum", "browseInfo", "viewCount", "wantInfo"])
+                    or _first_text(detail_params, ["wantCount", "wantNum", "browseInfo", "viewCount", "wantInfo"])
+                ),
+                item_url=item_url,
+                condition=_first_text(ex_content, ["condition", "itemCondition"]) or _guess_condition(title),
+                free_shipping=_free_shipping_from_texts([tag, tagname, title]),
+                raw_text=_compact_text(json.dumps(raw_source, ensure_ascii=False))[:500],
+            )
+        )
+    return items
+
+
 def _item_from_dict(data: dict[str, Any]) -> XianyuParsedItem | None:
+    item_id = _first_text(data, ["itemId", "item_id", "id"])
     title = _first_text(data, ["title", "name", "itemTitle", "mainTitle", "subject", "desc"])
     price = _price_from_any(
         _first_value(
@@ -354,12 +455,23 @@ def _item_from_dict(data: dict[str, Any]) -> XianyuParsedItem | None:
         return None
 
     return XianyuParsedItem(
+        item_id=item_id,
         title=title,
         price=price,
         location=_first_text(data, ["area", "location", "city", "sellerLocation"]),
         item_updated_at=_first_text(data, ["publishTime", "updateTime", "createdAt", "itemUpdatedAt"]),
+        publish_time=_timestamp_to_iso(_first_value(data, ["publishTime", "publish_time"]))
+        or _first_text(data, ["publishTime", "publish_time"]),
         want_info=_first_text(data, ["wantCount", "wantNum", "browseInfo", "viewCount", "wantInfo"]),
-        item_url=_normalize_url(_first_text(data, ["itemUrl", "url", "targetUrl", "detailUrl"])),
+        item_url=_normalize_url(_first_text(data, ["itemUrl", "url", "targetUrl", "detailUrl"]))
+        or (f"https://www.goofish.com/item?id={item_id}" if item_id else ""),
+        condition=_first_text(data, ["condition", "itemCondition"]) or _guess_condition(title),
+        free_shipping=_free_shipping_from_texts(
+            [
+                _first_text(data, ["tag", "tags", "tagname", "tagName", "shipping"]),
+                title,
+            ]
+        ),
         raw_text=_compact_text(json.dumps(data, ensure_ascii=False))[:500],
     )
 
@@ -394,6 +506,8 @@ def _parse_dom_items(html: str) -> list[XianyuParsedItem]:
                 item_updated_at=_extract_item_time(text),
                 want_info=_extract_want_info(text),
                 item_url=_extract_item_url(tag),
+                condition=_guess_condition(title),
+                free_shipping=_free_shipping_from_texts([text]),
                 raw_text=text[:500],
             )
         )
@@ -435,6 +549,7 @@ def _dedupe_items(items: list[XianyuParsedItem]) -> list[XianyuParsedItem]:
         if item.price is None:
             continue
         key = (
+            item.item_id,
             re.sub(r"\s+", "", item.title.lower())[:40],
             round(float(item.price), 2),
             item.item_url,
@@ -477,6 +592,24 @@ def _product_tokens(product: Product) -> list[str]:
 
 def _has_preferred_condition(title: str) -> bool:
     return any(word in title for word in ["全新", "未拆", "未拆封", "未使用", "仅拆封", "准新"])
+
+
+def _guess_condition(title: str | None) -> str:
+    if not title:
+        return ""
+    match = re.search(r"(全新|未拆封|未使用|仅拆封|几乎全新|准新|[一二三四五六七八九十]成新|\d成新|\d{1,3}新)", title)
+    return match.group(1) if match else ""
+
+
+def _free_shipping_from_texts(texts: list[str]) -> bool | None:
+    joined = " ".join(text for text in texts if text).lower()
+    if not joined:
+        return None
+    if "不包邮" in joined or "运费到付" in joined:
+        return False
+    if "包邮" in joined or "free shipping" in joined or "freeship" in joined:
+        return True
+    return None
 
 
 def _sell_keyword(product: Product) -> str:
@@ -528,12 +661,14 @@ def _clean_title(text: str) -> str:
 
 def _extract_price(text: str) -> float | None:
     for pattern in [
-        r"[¥￥]\s*([0-9]+(?:\.[0-9]{1,2})?)",
+        r"[¥￥]\s*([0-9]+(?:\.[0-9]{1,2})?)(万)?",
         r"(?:price|价格)[\"':：\s]*([0-9]+(?:\.[0-9]{1,2})?)",
     ]:
         match = re.search(pattern, text, flags=re.IGNORECASE)
         if match:
             value = float(match.group(1))
+            if len(match.groups()) >= 2 and match.group(2):
+                value *= 10000
             if 10 <= value <= 10000:
                 return value
     return None
@@ -560,6 +695,8 @@ def _numeric_price(text: str) -> float | None:
     if not match:
         return None
     value = float(match.group(1))
+    if "万" in text[match.end() : match.end() + 2]:
+        value *= 10000
     if 10 <= value <= 10000:
         return value
     return None
@@ -624,6 +761,20 @@ def _first_text(data: dict[str, Any], keys: list[str]) -> str:
     if isinstance(value, (dict, list)):
         return _compact_text(json.dumps(value, ensure_ascii=False))
     return _compact_text(str(value))
+
+
+def _timestamp_to_iso(value: Any) -> str:
+    if value is None or value == "":
+        return ""
+    try:
+        number = int(str(value).strip())
+    except ValueError:
+        return ""
+    if number <= 0:
+        return ""
+    if number > 10_000_000_000:
+        number = number // 1000
+    return datetime.fromtimestamp(number, tz=timezone.utc).replace(microsecond=0).isoformat()
 
 
 def _compact_text(text: str) -> str:

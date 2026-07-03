@@ -3,19 +3,46 @@ from __future__ import annotations
 from typing import Any
 from urllib.parse import quote_plus
 
-from xianyu_tools import parse_xianyu_html
+from xianyu_tools import parse_xianyu_html, parse_xianyu_search_json
 
 
 PLATFORM = "xianyu"
+SEARCH_API = "mtop.taobao.idlemtopsearch.pc.search"
 
 
 def fetch_search_results(page: Any, product: Any, limit: int = 20) -> dict[str, object]:
     url = f"https://www.goofish.com/search?q={quote_plus(product.sell_keyword or product.keyword or product.display_name)}"
-    page.goto(url, wait_until="domcontentloaded", timeout=30000)
-    page.wait_for_timeout(4000)
-    body_text = _body_text(page)
-    html = page.content()
-    items = parse_xianyu_html(html, product)
+    captured_payloads: list[Any] = []
+
+    def _on_response(response: Any) -> None:
+        if SEARCH_API not in str(getattr(response, "url", "")):
+            return
+        try:
+            captured_payloads.append(response.json())
+        except Exception:
+            pass
+
+    page.on("response", _on_response)
+    try:
+        page.goto(url, wait_until="domcontentloaded", timeout=30000)
+        page.wait_for_timeout(4000)
+        if not captured_payloads:
+            _scroll_once(page)
+            page.wait_for_timeout(2500)
+        body_text = _body_text(page)
+        html = page.content()
+    finally:
+        try:
+            page.remove_listener("response", _on_response)
+        except Exception:
+            pass
+
+    items = []
+    for payload in captured_payloads:
+        items.extend(parse_xianyu_search_json(payload, product))
+    items = _dedupe_items(items)
+    if not items:
+        items = parse_xianyu_html(html, product)
     if limit > 0:
         items = items[:limit]
 
@@ -26,6 +53,7 @@ def fetch_search_results(page: Any, product: Any, limit: int = 20) -> dict[str, 
             "items": [],
             "url": page.url,
             "reason": _failure_reason(body_text),
+            "capture_mode": "response" if captured_payloads else "html",
         }
 
     return {
@@ -34,6 +62,7 @@ def fetch_search_results(page: Any, product: Any, limit: int = 20) -> dict[str, 
         "items": items,
         "url": page.url,
         "reason": "",
+        "capture_mode": "response" if captured_payloads else "html",
     }
 
 
@@ -58,3 +87,22 @@ def _body_text(page: Any) -> str:
         return page.locator("body").inner_text(timeout=3000)
     except Exception:
         return ""
+
+
+def _scroll_once(page: Any) -> None:
+    try:
+        page.evaluate("window.scrollTo(0, Math.min(document.body.scrollHeight, 1200))")
+    except Exception:
+        pass
+
+
+def _dedupe_items(items: list[Any]) -> list[Any]:
+    seen = set()
+    deduped = []
+    for item in items:
+        key = item.item_id or (item.title, item.price, item.item_url)
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(item)
+    return deduped

@@ -5,6 +5,7 @@ import json
 import sys
 from pathlib import Path
 
+from alerts import check_alerts
 from analyzer import analyze
 from browser_fetcher import FetchOptions, fetch_prices
 from collection import build_buy_links, build_collection_plan, build_search_keywords
@@ -123,6 +124,18 @@ def build_parser() -> argparse.ArgumentParser:
     fetch_parser.add_argument("--delay", type=float, default=5, help="每个页面访问间隔秒数，默认 5")
     fetch_parser.add_argument("--limit", type=int, default=10, help="每次最多采集商品数，默认 10")
 
+    alerts_parser = subparsers.add_parser("check-alerts", help="检查买入价降价提醒")
+    alerts_parser.add_argument("--product-id", help="只检查某个商品")
+    alerts_parser.add_argument("--min-drop-abs", type=float, default=10, help="较上次降价提醒金额阈值，默认 10")
+    alerts_parser.add_argument("--min-drop-pct", type=float, default=5, help="较上次降价提醒百分比阈值，默认 5")
+    alerts_parser.add_argument("--cooldown-hours", type=int, default=24, help="同类提醒冷却小时数，默认 24")
+    alerts_parser.add_argument(
+        "--format",
+        choices=["table", "json"],
+        default="table",
+        help="输出格式",
+    )
+
     return parser
 
 
@@ -238,6 +251,26 @@ def main(argv: list[str] | None = None) -> int:
                 ),
             )
             print_fetch_outcomes(outcomes)
+            alert_rows = check_alerts(db_path=db_path, product_id=args.product_id)
+            if alert_rows:
+                print("\n新增降价提醒:")
+                print_alert_events(alert_rows)
+            else:
+                print("\n暂无新增降价提醒")
+            return 0
+
+        if args.command == "check-alerts":
+            alert_rows = check_alerts(
+                db_path=db_path,
+                product_id=args.product_id,
+                min_drop_abs=args.min_drop_abs,
+                min_drop_pct=args.min_drop_pct,
+                cooldown_hours=args.cooldown_hours,
+            )
+            if args.format == "json":
+                print(json.dumps([row.__dict__ for row in alert_rows], ensure_ascii=False, indent=2))
+            else:
+                print_alert_events(alert_rows)
             return 0
 
     except Exception as exc:
@@ -354,13 +387,16 @@ def print_collection_plan(rows: list[object]) -> None:
 
 
 def print_xianyu_items(rows: list[object]) -> None:
-    headers = ["标题", "价格", "地区", "时间", "想要/浏览", "商品链接"]
+    headers = ["item_id", "标题", "价格", "地区", "时间", "成色", "包邮", "想要/浏览", "商品链接"]
     table_rows = [
         [
+            row.item_id,
             row.title,
             _money(row.price),
             row.location,
-            row.item_updated_at,
+            row.publish_time or row.item_updated_at,
+            row.condition,
+            _bool_text(row.free_shipping),
             row.want_info,
             row.item_url,
         ]
@@ -443,6 +479,45 @@ def print_fetch_outcomes(rows: list[object]) -> None:
     ]
     _print_table(headers, table_rows)
     print("采集日志: logs/fetch.log")
+
+
+def print_alert_events(rows: list[object]) -> None:
+    headers = [
+        "product_id",
+        "商品名称",
+        "提醒类型",
+        "当前价",
+        "对比价",
+        "降价额",
+        "降幅",
+        "source",
+        "提醒内容",
+        "时间",
+    ]
+    table_rows = [
+        [
+            row.product_id,
+            row.product_name,
+            _alert_type_text(row.alert_type),
+            _money(row.current_price),
+            _money(row.previous_price or row.threshold_price),
+            _money(row.drop_abs),
+            _percent(row.drop_pct),
+            row.source,
+            row.message,
+            row.created_at,
+        ]
+        for row in rows
+    ]
+    _print_table(headers, table_rows)
+
+
+def _alert_type_text(value: str) -> str:
+    return {
+        "target_buy_reached": "达到目标买入价",
+        "all_time_low": "历史新低",
+        "price_decreased": "较上次下降",
+    }.get(value, value)
 
 
 def _print_table(headers: list[str], rows: list[list[str]]) -> None:
