@@ -1,0 +1,11 @@
+__pycache__/
+*.py[cod]
+.venv/
+.DS_Store
+reports/
+data/*.db
+data/prices.csv
+data/search_urls.csv
+data/xianyu/*
+!data/xianyu/.gitkeep
+logs/*.log

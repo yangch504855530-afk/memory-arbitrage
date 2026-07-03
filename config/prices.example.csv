@@ -1,0 +1,4 @@
+product_id,buy_price,sell_price,xianyu_listing_count,source,observed_at
+kingbank-ddr4-3200-16g-001,157,211,11,manual_batch,2026-07-03T20:00:00+08:00
+crucial-ddr5-5600-sodimm-16g-001,249,292,14,manual_batch,2026-07-03T20:00:00+08:00
+samsung-ddr5-5600-udimm-32g-001,532,578,32,manual_batch,2026-07-03T20:00:00+08:00

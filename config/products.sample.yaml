@@ -1,0 +1,54 @@
+products:
+  - product_id: kingbank-ddr4-3200-16g-001
+    brand: KingBank
+    model: DDR4 3200 16GB
+    keyword: 金百达 DDR4 3200 16G 台式机内存
+    capacity: 16GB
+    frequency: 3200MHz
+    memory_type: DDR4
+    form_factor: UDIMM
+    buy_platform: jd
+    buy_url: https://item.jd.com/sample-kingbank-ddr4-3200-16g.html
+    sell_platform: xianyu
+    sell_keyword: 金百达 DDR4 3200 16G
+    target_buy_price: 165
+    target_sell_price: 205
+    min_profit_rate: 0.12
+    shipping_cost: 8
+    note: 样例：当前价格处于低位且利润率较高
+
+  - product_id: crucial-ddr5-5600-sodimm-16g-001
+    brand: Crucial
+    model: DDR5 5600 16GB
+    keyword: 英睿达 DDR5 5600 16G 笔记本内存
+    capacity: 16GB
+    frequency: 5600MHz
+    memory_type: DDR5
+    form_factor: SODIMM
+    buy_platform: pdd
+    buy_url: https://mobile.yangkeduo.com/sample-crucial-ddr5-5600-16g.html
+    sell_platform: xianyu
+    sell_keyword: 英睿达 DDR5 5600 16G 笔记本
+    target_buy_price: 245
+    target_sell_price: 295
+    min_profit_rate: 0.10
+    shipping_cost: 8
+    note: 样例：仍有利润，但当前买入价不是低位
+
+  - product_id: samsung-ddr5-5600-udimm-32g-001
+    brand: Samsung
+    model: DDR5 5600 32GB
+    keyword: 三星 DDR5 5600 32G 台式机内存
+    capacity: 32GB
+    frequency: 5600MHz
+    memory_type: DDR5
+    form_factor: UDIMM
+    buy_platform: taobao
+    buy_url: https://item.taobao.com/sample-samsung-ddr5-5600-32g.html
+    sell_platform: xianyu
+    sell_keyword: 三星 DDR5 5600 32G
+    target_buy_price: 520
+    target_sell_price: 600
+    min_profit_rate: 0.08
+    shipping_cost: 10
+    note: 样例：利润率不足且闲鱼参考价走弱
