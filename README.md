@@ -342,6 +342,7 @@ python src/main.py fetch-prices
 python src/main.py fetch-prices --product-id kingbank-ddr4-3200-16g-001 --source jd --headful
 python src/main.py fetch-prices --source xianyu --limit 3
 python src/main.py fetch-prices --source jd --source xianyu --delay 8 --limit 5
+python src/main.py fetch-prices --source xianyu --headful --browser-channel chrome --use-browser-profile --manual-wait 60 --limit 1
 ```
 
 参数说明：
@@ -349,8 +350,26 @@ python src/main.py fetch-prices --source jd --source xianyu --delay 8 --limit 5
 - `--product-id`：只采集某个商品
 - `--source`：采集来源，可重复指定；支持 `jd`、`pdd`、`xianyu`
 - `--headful`：显示浏览器窗口，适合排查页面问题
+- `--browser-channel`：浏览器通道，默认 `chromium`；设为 `chrome` 时使用本机 Chrome
+- `--use-browser-profile`：使用默认持久化资料目录 `data/browser-profile`
+- `--profile-dir`：指定持久化浏览器资料目录，适合人工登录后复用 session
+- `--manual-wait`：页面打开后等待人工处理的秒数，例如 `60`
 - `--delay`：每个页面访问间隔秒数，默认 `5`
 - `--limit`：每次最多采集商品数，默认 `10`
+
+人工辅助浏览器模式：
+
+```bash
+python src/main.py fetch-prices \
+  --source xianyu \
+  --headful \
+  --browser-channel chrome \
+  --use-browser-profile \
+  --manual-wait 60 \
+  --limit 1
+```
+
+该模式会打开本机 Chrome，并把浏览器资料保存在 `data/browser-profile`。如果页面要求登录或出现验证，请在打开的窗口里人工处理；工具只等待并继续尝试解析，不会自动登录、不会处理验证码，也不会隐藏自动化特征或绕过风控。
 
 买入平台采集：
 
@@ -381,6 +400,7 @@ logs/fetch.log
 
 - 工具会停止，不会重试轰炸
 - 可以加 `--headful` 查看页面状态
+- 可以使用 `--browser-channel chrome --use-browser-profile --manual-wait 60` 进入人工辅助浏览器模式
 - 不建议继续反复运行
 - 回退到 `prices.csv` 手动录价，或使用 `import-xianyu-html` 导入手动保存的 HTML
 

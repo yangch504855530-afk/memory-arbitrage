@@ -21,6 +21,7 @@ from xianyu_tools import XianyuSuggestion, suggest_prices
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_FETCH_LOG_PATH = PROJECT_ROOT / "logs" / "fetch.log"
+DEFAULT_BROWSER_PROFILE_DIR = PROJECT_ROOT / "data" / "browser-profile"
 SUPPORTED_SOURCES = {"jd", "pdd", "xianyu"}
 
 
@@ -29,6 +30,9 @@ class FetchOptions:
     product_id: str | None = None
     sources: list[str] | None = None
     headful: bool = False
+    browser_channel: str | None = None
+    profile_dir: str | None = None
+    manual_wait: int = 0
     delay: float = 5
     limit: int = 10
     xianyu_result_limit: int = 20
@@ -60,18 +64,41 @@ def fetch_prices(
     products = _select_products(db_path=db_path, product_id=options.product_id, limit=options.limit)
     outcomes: list[FetchOutcome] = []
 
-    _write_log(log_path, {"event": "start", "time": utc_now_iso(), "sources": sources, "limit": options.limit})
+    _write_log(
+        log_path,
+        {
+            "event": "start",
+            "time": utc_now_iso(),
+            "sources": sources,
+            "limit": options.limit,
+            "headful": options.headful,
+            "browser_channel": options.browser_channel or "chromium",
+            "profile_dir": options.profile_dir or "",
+            "manual_wait": options.manual_wait,
+        },
+    )
     if not products:
         _write_log(log_path, {"event": "finish", "time": utc_now_iso(), "count": 0, "reason": "no products"})
         return outcomes
 
-    with _start_browser(headful=options.headful) as browser:
+    with _start_browser(
+        headful=options.headful,
+        browser_channel=options.browser_channel,
+        profile_dir=options.profile_dir,
+    ) as browser:
         page = browser.new_page()
         for product in products:
             for source in sources:
                 if source in {"jd", "pdd"} and product.buy_platform != source:
                     continue
-                outcome = _fetch_one(page, product, source, db_path, options.xianyu_result_limit)
+                outcome = _fetch_one(
+                    page,
+                    product,
+                    source,
+                    db_path,
+                    options.xianyu_result_limit,
+                    options.manual_wait,
+                )
                 outcomes.append(outcome)
                 _write_outcome_log(log_path, outcome)
                 if _should_stop_for_manual_handling(outcome.reason):
@@ -89,15 +116,16 @@ def _fetch_one(
     source: str,
     db_path: str | Path,
     xianyu_result_limit: int,
+    manual_wait: int,
 ) -> FetchOutcome:
     observed_at = utc_now_iso()
     try:
         if source == "jd":
-            return _fetch_buy(page, product, jd_playwright, "jd_auto", observed_at, db_path)
+            return _fetch_buy(page, product, jd_playwright, "jd_auto", observed_at, db_path, manual_wait)
         if source == "pdd":
-            return _fetch_buy(page, product, pdd_playwright, "pdd_auto", observed_at, db_path)
+            return _fetch_buy(page, product, pdd_playwright, "pdd_auto", observed_at, db_path, manual_wait)
         if source == "xianyu":
-            return _fetch_xianyu(page, product, observed_at, db_path, xianyu_result_limit)
+            return _fetch_xianyu(page, product, observed_at, db_path, xianyu_result_limit, manual_wait)
         return FetchOutcome(
             product_id=product.product_id,
             product_name=product.display_name,
@@ -124,6 +152,7 @@ def _fetch_buy(
     source: str,
     observed_at: str,
     db_path: str | Path,
+    manual_wait: int,
 ) -> FetchOutcome:
     if not product.buy_url:
         return FetchOutcome(
@@ -134,7 +163,7 @@ def _fetch_buy(
             observed_at=observed_at,
             reason="缺少 buy_url",
         )
-    result = collector.fetch_buy_price(page, product.buy_url)
+    result = collector.fetch_buy_price(page, product.buy_url, manual_wait_seconds=manual_wait)
     price = result.get("price")
     ok = bool(result.get("ok"))
     if ok and price is not None:
@@ -170,8 +199,14 @@ def _fetch_xianyu(
     observed_at: str,
     db_path: str | Path,
     result_limit: int,
+    manual_wait: int,
 ) -> FetchOutcome:
-    result = xianyu_playwright.fetch_search_results(page, product, limit=result_limit)
+    result = xianyu_playwright.fetch_search_results(
+        page,
+        product,
+        limit=result_limit,
+        manual_wait_seconds=manual_wait,
+    )
     ok = bool(result.get("ok"))
     items = list(result.get("items") or [])
     if ok:
@@ -223,10 +258,17 @@ def _fetch_xianyu(
 
 
 class _BrowserContext:
-    def __init__(self, headful: bool):
+    def __init__(
+        self,
+        headful: bool,
+        browser_channel: str | None,
+        profile_dir: str | None,
+    ):
         self.headful = headful
+        self.browser_channel = _normalize_browser_channel(browser_channel)
+        self.profile_dir = profile_dir
         self._playwright = None
-        self._browser = None
+        self._browser_or_context = None
 
     def __enter__(self) -> object:
         try:
@@ -236,18 +278,45 @@ class _BrowserContext:
                 "Playwright is required for fetch-prices. Run: pip install -r requirements.txt && python -m playwright install chromium"
             ) from exc
         self._playwright = sync_playwright().start()
-        self._browser = self._playwright.chromium.launch(headless=not self.headful)
-        return self._browser
+        launch_kwargs = {"headless": not self.headful}
+        if self.browser_channel:
+            launch_kwargs["channel"] = self.browser_channel
+
+        if self.profile_dir:
+            profile_path = Path(self.profile_dir)
+            profile_path.mkdir(parents=True, exist_ok=True)
+            self._browser_or_context = self._playwright.chromium.launch_persistent_context(
+                str(profile_path),
+                locale="zh-CN",
+                **launch_kwargs,
+            )
+        else:
+            self._browser_or_context = self._playwright.chromium.launch(**launch_kwargs)
+        return self._browser_or_context
 
     def __exit__(self, exc_type: object, exc: object, tb: object) -> None:
-        if self._browser is not None:
-            self._browser.close()
+        if self._browser_or_context is not None:
+            self._browser_or_context.close()
         if self._playwright is not None:
             self._playwright.stop()
 
 
-def _start_browser(headful: bool) -> _BrowserContext:
-    return _BrowserContext(headful=headful)
+def _start_browser(
+    headful: bool,
+    browser_channel: str | None = None,
+    profile_dir: str | None = None,
+) -> _BrowserContext:
+    return _BrowserContext(
+        headful=headful,
+        browser_channel=browser_channel,
+        profile_dir=profile_dir,
+    )
+
+
+def _normalize_browser_channel(browser_channel: str | None) -> str | None:
+    if not browser_channel or browser_channel == "chromium":
+        return None
+    return browser_channel
 
 
 def _normalize_sources(sources: list[str] | None) -> list[str]:

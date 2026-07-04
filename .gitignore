@@ -4,6 +4,7 @@ __pycache__/
 .DS_Store
 reports/
 data/*.db
+data/browser-profile/
 data/prices.csv
 data/search_urls.csv
 data/xianyu/*

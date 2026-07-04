@@ -7,8 +7,9 @@ from typing import Any
 PLATFORM = "jd"
 
 
-def fetch_buy_price(page: Any, url: str) -> dict[str, object]:
+def fetch_buy_price(page: Any, url: str, manual_wait_seconds: int = 0) -> dict[str, object]:
     page.goto(url, wait_until="domcontentloaded", timeout=30000)
+    _manual_wait(page, manual_wait_seconds)
     page.wait_for_timeout(2500)
     title = _page_title(page)
     price = _extract_price_from_selectors(
@@ -108,3 +109,9 @@ def _page_title(page: Any) -> str:
         return page.title()
     except Exception:
         return ""
+
+
+def _manual_wait(page: Any, seconds: int) -> None:
+    if seconds <= 0:
+        return
+    page.wait_for_timeout(seconds * 1000)

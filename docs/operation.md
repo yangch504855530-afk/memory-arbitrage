@@ -43,6 +43,20 @@ python src/main.py fetch-prices --source xianyu --limit 3
 python src/main.py fetch-prices --product-id kingbank-ddr4-3200-16g-001 --source jd --headful
 ```
 
+如果闲鱼返回“非法访问”或看不到搜索结果，可以改用人工辅助浏览器模式：
+
+```bash
+python src/main.py fetch-prices \
+  --source xianyu \
+  --headful \
+  --browser-channel chrome \
+  --use-browser-profile \
+  --manual-wait 60 \
+  --limit 1
+```
+
+这个模式会打开本机 Chrome，并使用 `data/browser-profile` 保存本地浏览器资料。第一次运行时，如果页面要求登录或确认，请在打开的窗口里人工处理；工具只等待，不会自动登录或自动处理验证码。
+
 自动采集成功后，可以直接运行：
 
 ```bash
@@ -206,6 +220,7 @@ python -m playwright install chromium
 - 默认每个页面间隔 `5` 秒
 - 默认每次最多采集 `10` 个商品
 - 闲鱼侧只监听搜索页自然返回的搜索结果响应，监听不到时回退到 HTML/DOM 解析
+- 人工辅助模式可以使用本机 Chrome 和持久化本地浏览器资料，但不会隐藏自动化特征或绕过风控
 
 遇到以下情况，工具会停止或给出失败原因：
 
@@ -219,6 +234,7 @@ python -m playwright install chromium
 处理建议：
 
 - 先用 `--headful` 看页面真实状态。
+- 如果普通 Playwright Chromium 被拦，可以试一次 `--browser-channel chrome --use-browser-profile --manual-wait 60`。
 - 如果是登录或验证码，不要反复运行。
 - 回退到手动 `prices.csv`。
 - 闲鱼可回退到保存 HTML 后使用 `import-xianyu-html`。

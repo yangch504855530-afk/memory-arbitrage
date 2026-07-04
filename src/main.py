@@ -7,7 +7,7 @@ from pathlib import Path
 
 from alerts import check_alerts
 from analyzer import analyze
-from browser_fetcher import FetchOptions, fetch_prices
+from browser_fetcher import DEFAULT_BROWSER_PROFILE_DIR, FetchOptions, fetch_prices
 from collection import build_buy_links, build_collection_plan, build_search_keywords
 from collectors.manual import ManualCollector
 from db import DEFAULT_DB_PATH, init_db, insert_price_observation
@@ -121,6 +121,27 @@ def build_parser() -> argparse.ArgumentParser:
         help="采集来源，可重复指定；不指定时默认 jd/pdd/xianyu",
     )
     fetch_parser.add_argument("--headful", action="store_true", help="显示浏览器窗口")
+    fetch_parser.add_argument(
+        "--browser-channel",
+        choices=["chromium", "chrome", "chrome-beta", "chrome-dev", "msedge"],
+        default="chromium",
+        help="浏览器通道，默认使用 Playwright Chromium；可设为 chrome 使用本机 Chrome",
+    )
+    fetch_parser.add_argument(
+        "--use-browser-profile",
+        action="store_true",
+        help=f"使用默认持久化浏览器资料目录: {DEFAULT_BROWSER_PROFILE_DIR}",
+    )
+    fetch_parser.add_argument(
+        "--profile-dir",
+        help="指定持久化浏览器资料目录；用于人工登录后复用本地 session",
+    )
+    fetch_parser.add_argument(
+        "--manual-wait",
+        type=int,
+        default=0,
+        help="页面打开后等待人工处理的秒数，默认 0；仅做人工登录/验证辅助，不自动处理",
+    )
     fetch_parser.add_argument("--delay", type=float, default=5, help="每个页面访问间隔秒数，默认 5")
     fetch_parser.add_argument("--limit", type=int, default=10, help="每次最多采集商品数，默认 10")
 
@@ -240,12 +261,18 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         if args.command == "fetch-prices":
+            profile_dir = args.profile_dir
+            if not profile_dir and args.use_browser_profile:
+                profile_dir = str(DEFAULT_BROWSER_PROFILE_DIR)
             outcomes = fetch_prices(
                 db_path=db_path,
                 options=FetchOptions(
                     product_id=args.product_id,
                     sources=args.source,
                     headful=args.headful,
+                    browser_channel=args.browser_channel,
+                    profile_dir=profile_dir,
+                    manual_wait=args.manual_wait,
                     delay=args.delay,
                     limit=args.limit,
                 ),

@@ -10,7 +10,12 @@ PLATFORM = "xianyu"
 SEARCH_API = "mtop.taobao.idlemtopsearch.pc.search"
 
 
-def fetch_search_results(page: Any, product: Any, limit: int = 20) -> dict[str, object]:
+def fetch_search_results(
+    page: Any,
+    product: Any,
+    limit: int = 20,
+    manual_wait_seconds: int = 0,
+) -> dict[str, object]:
     url = f"https://www.goofish.com/search?q={quote_plus(product.sell_keyword or product.keyword or product.display_name)}"
     captured_payloads: list[Any] = []
 
@@ -25,6 +30,7 @@ def fetch_search_results(page: Any, product: Any, limit: int = 20) -> dict[str, 
     page.on("response", _on_response)
     try:
         page.goto(url, wait_until="domcontentloaded", timeout=30000)
+        _manual_wait(page, manual_wait_seconds)
         page.wait_for_timeout(4000)
         if not captured_payloads:
             _scroll_once(page)
@@ -106,3 +112,9 @@ def _dedupe_items(items: list[Any]) -> list[Any]:
         seen.add(key)
         deduped.append(item)
     return deduped
+
+
+def _manual_wait(page: Any, seconds: int) -> None:
+    if seconds <= 0:
+        return
+    page.wait_for_timeout(seconds * 1000)
