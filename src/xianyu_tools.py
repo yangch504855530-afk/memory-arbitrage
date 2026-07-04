@@ -264,8 +264,20 @@ def _suggest_price(
         )
 
     matched = [item for item in valid if _title_score(product, item.title) >= 2]
-    base_pool = matched if matched else valid
-    no_match_risk = "未找到足够同款标题样本，已退回使用全部价格样本" if not matched else ""
+    if not matched:
+        return XianyuSuggestion(
+            product_id=product.product_id,
+            product_name=product.display_name,
+            suggested_sell_price=None,
+            sample_count=len(valid),
+            used_sample_count=0,
+            price_range=_price_range([float(item.price) for item in valid if item.price is not None]),
+            used_price_range="",
+            observed_at=observed_at,
+            risk_tips="未找到同款标题样本，不生成闲鱼建议价；请检查搜索结果是否为目标关键词",
+        )
+    base_pool = matched
+    no_match_risk = ""
 
     filtered, outlier_count = _filter_outliers([float(item.price) for item in base_pool])
     used_items = [item for item in base_pool if item.price is not None and float(item.price) in filtered]
