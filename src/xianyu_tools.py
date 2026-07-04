@@ -304,7 +304,27 @@ def _suggest_price(
         risks.append(f"已剔除异常价格 {outlier_count} 个")
     if len(preferred) < 2:
         risks.append("全新/未拆封样本不足，建议确认成色")
-    risks.append("建议价来自保存 HTML 的静态解析，需人工确认规格和成色")
+    risks.append("建议价来自闲鱼解析结果，需人工确认规格和成色")
+
+    if (
+        suggested is not None
+        and product.target_sell_price is not None
+        and suggested > float(product.target_sell_price) * 1.35
+    ):
+        risks.append(
+            f"建议价 {suggested:.2f} 明显高于目标卖出价 {product.target_sell_price:.2f}，疑似套条/高挂价，不自动生成建议价"
+        )
+        return XianyuSuggestion(
+            product_id=product.product_id,
+            product_name=product.display_name,
+            suggested_sell_price=None,
+            sample_count=len(valid),
+            used_sample_count=len(used_items),
+            price_range=_price_range([float(item.price) for item in valid if item.price is not None]),
+            used_price_range=_price_range(filtered),
+            observed_at=observed_at,
+            risk_tips="；".join(risks),
+        )
 
     return XianyuSuggestion(
         product_id=product.product_id,
