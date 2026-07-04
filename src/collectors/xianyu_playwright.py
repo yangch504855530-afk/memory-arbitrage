@@ -71,7 +71,7 @@ def _failure_reason(text: str) -> str:
         return "触发验证码"
     if _has_any(text, ["登录后", "请登录", "扫码登录", "账号登录"]):
         return "需要登录"
-    if _has_any(text, ["访问过于频繁", "系统繁忙", "环境异常", "风险"]):
+    if _has_any(text, ["访问过于频繁", "系统繁忙", "环境异常", "风险", "非法访问", "正常浏览器访问"]):
         return "触发风控"
     if text.strip():
         return "未找到搜索结果元素"
